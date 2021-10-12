@@ -2,10 +2,14 @@ package plusserver
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/diag"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/schema"
 	"github.com/hashicorp/terraform-plugin-sdk/v2/helper/validation"
 	"github.com/plusserver/terraform-provider-plusserver/api/dns"
+	"strconv"
+	"strings"
 )
 
 func resourceDomainRecord() *schema.Resource {
@@ -16,7 +20,7 @@ func resourceDomainRecord() *schema.Resource {
 		UpdateContext: resourceDomainRecordUpdate,
 		DeleteContext: resourceDomainRecordDelete,
 		Importer: &schema.ResourceImporter{
-			StateContext: schema.ImportStatePassthroughContext,
+			StateContext: resourceDomainRecordImport,
 		},
 
 		Schema: map[string]*schema.Schema{
@@ -52,6 +56,43 @@ func resourceDomainRecord() *schema.Resource {
 			},
 		},
 	}
+}
+
+func resourceDomainRecordImport(ctx context.Context, d *schema.ResourceData, meta interface{}) ([]*schema.ResourceData, error) {
+	parts := strings.SplitN(d.Id(), ":", 2)
+	client := meta.(*dns.Client)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return []*schema.ResourceData{}, fmt.Errorf("unexpected format of ID (%s), expected domainId:recordId", parts)
+	}
+
+	// Split ID separate by domainId and recordId
+	domainId, convErr := strconv.Atoi(parts[0])
+	convErr = d.Set("domain_id", domainId)
+	if convErr != nil {
+		return []*schema.ResourceData{}, convErr
+	}
+	// Set recordId to resource
+	d.SetId(parts[1])
+
+	// Get all records in rrset
+	records, err := client.GetRecords(ctx, domainId)
+	if err != nil {
+		return []*schema.ResourceData{}, err
+	}
+	// Get record by Id
+	domainRecord := getRecordResourceById(d.Id(), records.DnsResourceRecordList)
+	if domainRecord == nil {
+		return []*schema.ResourceData{}, errors.New("could not find record by id in rrset domain")
+	}
+	err = d.Set("content", domainRecord.Content)
+	err = d.Set("name", domainRecord.Name)
+	err = d.Set("ttl", domainRecord.Ttl)
+	err = d.Set("type", domainRecord.Type)
+	if err != nil {
+		return []*schema.ResourceData{}, err
+	}
+
+	return []*schema.ResourceData{d}, nil
 }
 
 func resourceDomainRecordUpdate(ctx context.Context, d *schema.ResourceData, m interface{}) diag.Diagnostics {
@@ -190,4 +231,17 @@ func getRecordResourceID(name string, content string, items []*dns.RecordsRespon
 	}
 
 	return ""
+}
+
+func getRecordResourceById(id string, items []*dns.RecordsResponseEntry) *dns.RecordsResponseEntry {
+	if items != nil {
+		for _, recordItem := range items {
+			if recordItem.DnsResourceRecordId == id {
+				return recordItem
+			}
+		}
+		return nil
+	}
+
+	return nil
 }
