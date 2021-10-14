@@ -34,7 +34,7 @@ $ make install
 Using the provider
 ----------------------
 
-Please see the documentation at [terraform.io](#).
+Please see the documentation at [terraform.io](https://registry.terraform.io/providers/plusserver/plusserver/latest/docs).
 
 Or you can browse the documentation within this repo [here](#).
 
